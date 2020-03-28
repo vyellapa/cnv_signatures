@@ -9,7 +9,9 @@ library("GenomicRanges")
 library(stringr)
 options(digits=20) 
 library(RColorBrewer)
-
+library(ConsensusClusterPlus)
+library(survival)
+library(survminer)
 #################################################################################
 ###
 ### create color for plotting
@@ -22,10 +24,11 @@ gg_color_hue <- function(n) {
 }
 cols = gg_color_hue(n)
 
-cnv_colors<- cols[c(1,4,8, 12,15,18 )]
+cnv_colors<- cols[c(1,4,12, 18,23,29 )]
 cnv_colors_final<- c(rep(cnv_colors[1], 3), rep(cnv_colors[2], 8), rep(cnv_colors[3], 7), 
                      rep(cnv_colors[4], 5), rep(cnv_colors[5], 3), rep(cnv_colors[6], 10))
 
+barplot(1:30,col=cnv_colors_final, names.arg = 1:30, las=2)
 ########################################################################################################
 ###
 ### upload the references
@@ -93,25 +96,42 @@ gr1_10mb = with(cyto_10mb_all, GRanges(chr, IRanges(start=start, end=end)))
 
 ### commpass orgnal calls (for a original mistake colum "major" = total alleles)
 cnv<- read.delim("~/Desktop/project/SV_project/2020_rebuttal/data/commpass_cnv_new_2020_merged_old.txt", stringsAsFactors = F)
-cnv_clean<- cnv[cnv$major %in% c(0:10),  ]
+cnv_clean<- cnv[cnv$major %in% c(0,1.5, 2, 2.5, 3:10),  ]
 cna_all_all<- cnv_clean[,c(1:6)]
 cna_mmrf<- cna_all_all[order(cna_all_all$IDA, cna_all_all$seqnames, cna_all_all$startA),]
 
+cna_mmrf[cna_mmrf$IDA == "MMRF_1031_1_BM",]
+
 ### before collapsing segmnent with the same copy number you need to adjust some values
-cna_mmrf$minor[is.na(cna_mmrf$minor)]<-0 ### transform the NA in 0
-cna_mmrf$minor<- ceiling(cna_mmrf$minor) #### transform the 0.5 in 1
+cna_mmrf$minor[is.na(cna_mmrf$minor)]<-0
+cna_mmrf$minor[(cna_mmrf$minor)==0.5]<-0 ### transform the NA in 0
+
+cna_mmrf$major<- ceiling(cna_mmrf$major) #### transform the 0.5 in 1
+colnames(cna_mmrf)[1:4]<-c("sample","Chrom","start","end")
+
+#### remove IGH, IGH, IGL 
+
+igh_cnv <- cnv_mmrf[cnv_mmrf$Chrom == 14 & cnv_mmrf$start >106032614 &  cnv_mmrf$start< 108288051 | 
+                      cnv_mmrf$Chrom == 22 & cnv_mmrf$start >22080474. &  cnv_mmrf$end< 24065085 | 
+                      cnv_mmrf$Chrom == 2 & cnv_mmrf$start >88090568 &  cnv_mmrf$end< 91274235,]
+
+cnv_mmrf_no_igh<- cnv_mmrf[- as.numeric(rownames(igh_cnv)),]
+
+cnv_mmrf_no_gih_no_x<- cnv_mmrf_no_gih[cnv_mmrf_no_gih$Chrom!="X",]
+
+
 ### collapse near segments with identical
 
 cnv_mmrf2<- list()
-sample_list<- unique(cna_mmrf$IDA)
+sample_list<- unique(cnv_mmrf_no_gih_no_x$sample)
 for(j in (1:length(sample_list)))
 {
-  cna_mmrf_single<- cna_mmrf[cna_mmrf$IDA == sample_list[j],]
+  cna_mmrf_single<- cnv_mmrf_no_gih_no_x[cnv_mmrf_no_gih_no_x$sample == sample_list[j],]
   sam_cnv_list<- list()
-  chr_list<- unique(cna_mmrf_single$seqnames)
+  chr_list<- unique(cna_mmrf_single$Chrom)
   for(i in (1:length(chr_list)))
   {
-    cna_mmrf_single_chr<- cna_mmrf_single[cna_mmrf_single$seqnames == chr_list[i],]
+    cna_mmrf_single_chr<- cna_mmrf_single[cna_mmrf_single$Chrom == chr_list[i],]
 
     list_chr<- list()
     # vec<- rle((paste(cna_mmrf_single_chr$major, cna_mmrf_single_chr$minor)))$length
@@ -124,10 +144,10 @@ for(j in (1:length(sample_list)))
     {
       if(w==1){
         int<- cna_mmrf_single_chr[1:vec[w],]
-        cna_mmrf_single_row<- c(int$IDA[1], int$seqnames[1], int$startA[1], int$endA[nrow(int)], int$major[1], max(int$minor))
+        cna_mmrf_single_row<- c(int$sample[1], int$Chrom[1], int$start[1], int$end[nrow(int)], int$major[1], max(int$minor))
       }else{
         int<- cna_mmrf_single_chr[(sum(vec[1:(w-1)])+1):sum(vec[1:(w)]),]
-        cna_mmrf_single_row<- c(int$IDA[1], int$seqnames[1], int$startA[1], int$endA[nrow(int)], int$major[1], max(int$minor))
+        cna_mmrf_single_row<- c(int$sample[1], int$Chrom[1], int$start[1], int$end[nrow(int)], int$major[1], max(int$minor))
       }
       list_chr[[w]]<- cna_mmrf_single_row
     }
@@ -146,6 +166,23 @@ cnv_mmrf$sample<- as.character(as.character(cnv_mmrf$sample))
 cnv_mmrf$Chrom<- as.character(as.character(cnv_mmrf$Chrom))
 cnv_mmrf[,3:ncol(cnv_mmrf)]<- apply(cnv_mmrf[,3:ncol(cnv_mmrf)], 2, function(x){as.numeric(as.character(x))})
 
+
+## small event problem - not clear how they handle this in the paper. 
+## FFPE generates a lot of artifacts and small gains/losses
+## in the
+
+
+jj<-cnv_mmrf_final[cnv_mmrf_final == "MMRF_1016_1_BM",]
+jj$diff<- jj$end- jj$start
+jj
+
+### if you want to run all
+cnv_mmrf_final<- cnv_mmrf
+plot(density(cnv_mmrf_final$end-cnv_mmrf_final$start))
+
+### if you want to run segments >100Kb
+cnv_mmrf_final<- cnv_mmrf[(cnv_mmrf$end-cnv_mmrf$start)>100000,]
+plot(density(cnv_mmrf_final$end-cnv_mmrf_final$start))
 ###################################################################################################################
 ###################################################################################################################
 ###################################################################################################################
@@ -162,16 +199,6 @@ sv_good<- read.delim("~/Desktop/project/SV_project/2020_rebuttal/sv_final/200323
 sample_list<- unique(cnv_mmrf$sample)[unique(cnv_mmrf$sample) %in% sv_good$sample]
 
 
-#### remove IGH, IGH, IGL 
-
-igh_cnv <- cnv_mmrf[cnv_mmrf$Chrom == 14 & cnv_mmrf$start >106032614 &  cnv_mmrf$start< 108288051 | 
-                           cnv_mmrf$Chrom == 22 & cnv_mmrf$start >22080474. &  cnv_mmrf$end< 24065085 | 
-                           cnv_mmrf$Chrom == 2 & cnv_mmrf$start >88090568 &  cnv_mmrf$end< 91274235,]
-
-cnv_mmrf_no_igh<- cnv_mmrf[- as.numeric(rownames(igh_cnv)),]
-
-cnv_mmrf_no_gih_no_x<- cnv_mmrf_no_gih[cnv_mmrf_no_gih$Chrom!="X",]
-
 ####
 # mat_sig_cnv_final<- matrix(c(paste(c(rep("1", 3), rep("2", 8), rep("3",7), rep("4",5), rep("6",3), rep("7", 10)),
 #                                    c("1" , "2" , "3" , "1" , "2" , "3" , "4" , "5" , "6" , "7" , "8" , "1" , "2" , "3" , "4" ,
@@ -180,6 +207,8 @@ cnv_mmrf_no_gih_no_x<- cnv_mmrf_no_gih[cnv_mmrf_no_gih$Chrom!="X",]
 #                            ncol=1)
 # colnames(mat_sig_cnv_final)[1]<-"code"
 # mat_sig_cnv_final<- as.data.frame(mat_sig_cnv_final)
+which(sample_list=="MMRF_1210_1_BM")
+
 
 mat_sig_cnv_final<- list()
 ## start loop for each sample
@@ -187,7 +216,7 @@ for(w in (1:length(sample_list)))
 {
   
 # print(w) 
-cnv_mmrf2<- cnv_mmrf_no_gih_no_x[cnv_mmrf_no_gih_no_x$sample ==sample_list[w],]
+cnv_mmrf2<- cnv_mmrf_final[cnv_mmrf_final$sample ==sample_list[w],]
 
 ##################################################################################################################
 ### 
@@ -195,7 +224,7 @@ cnv_mmrf2<- cnv_mmrf_no_gih_no_x[cnv_mmrf_no_gih_no_x$sample ==sample_list[w],]
 ###
 ##################################################################################################################
 
-cnv_mmrf2$seg_size<- (cnv_mmrf2$end - cnv_mmrf2$start)/10000000 # corrected 10^7
+cnv_mmrf2$seg_size<- (cnv_mmrf2$end - cnv_mmrf2$start)/100000 # corrected 10^7
 
 ##################################################################################################################
 ###
@@ -219,12 +248,13 @@ count_brk_10mb<- as.data.frame(table(paste(range_dri_10mb$seqnames, range_dri_10
 
 #############################################################################################
 ###
-### change in copy number adjacent 
+### change in copy number adjacent- correct for chromosome - not total
 ###
 #############################################################################################
 
 # again we don't want to count multiple times the same copy number change
 # we don't want to count for whole chromosome gain- loss or diploid
+
 cnv_mmrf2_second$jump<- NA
 summary_jump<- as.data.frame(table(cnv_mmrf2_second$Chrom))
 
@@ -232,15 +262,46 @@ summary_jump_whole_chrom<- summary_jump[summary_jump$Freq<2,]
 cnv_mmrf2_second_jump<- cnv_mmrf2_second[! cnv_mmrf2_second$Chrom %in% summary_jump_whole_chrom$Var1,]
 # cnv_mmrf2$jump<- NA
 
-for(i in (2:nrow(cnv_mmrf2_second_jump)))
-{
-  if(i==1){
-    cnv_mmrf2_second_jump$jump[1]=0
-  }else{
-    cnv_mmrf2_second_jump$jump[i]<- abs((cnv_mmrf2_second_jump$major[i]) - (cnv_mmrf2_second_jump$major[i+1]))
+# for(i in (2:nrow(cnv_mmrf2_second_jump)))
+# {
+#   if(i==1){
+#     cnv_mmrf2_second_jump$jump[1]=0
+#   }else{
+#     cnv_mmrf2_second_jump$jump[i]<- abs((cnv_mmrf2_second_jump$major[i]) - (cnv_mmrf2_second_jump$major[i+1]))
+#   }
+# }
+# cnv_mmrf2_second_jump$jump[is.na(cnv_mmrf2_second_jump$jump)]<-0
+if(length(unique(cnv_mmrf2_second_jump$Chrom))!=0){
+chr_list_jump<- unique(cnv_mmrf2_second_jump$Chrom)
+cnv_mmrf2_second_jump$jump<- NA
+all_chr_jump<- list()
+for(jj in chr_list_jump){
+  
+  cnv_mmrf2_second_jump_int<- cnv_mmrf2_second_jump[cnv_mmrf2_second_jump$Chrom == jj,]
+  for(z in (1:nrow(cnv_mmrf2_second_jump_int)))
+  {
+    if(z==1){
+      cnv_mmrf2_second_jump_int$jump[1]=0
+    }else{
+      
+      cnv_mmrf2_second_jump_int$jump[z]<- abs((cnv_mmrf2_second_jump_int$major[z]) - 
+                                             (cnv_mmrf2_second_jump_int$major[z-1]))
+    }
+    
+    
   }
+  
+  all_chr_jump[[jj]]<-cnv_mmrf2_second_jump_int
 }
-cnv_mmrf2_second_jump$jump[is.na(cnv_mmrf2_second_jump$jump)]<-0
+all_chr_jump2<- do.call("rbind", all_chr_jump)
+all_chr_jump2$jump[is.na(all_chr_jump2$jump)]<-0
+}else{
+  all_chr_jump2<- cnv_mmrf2_second[1,]
+  all_chr_jump2$jump<-0
+}
+
+### if you want to look for chromosome - i'm not really sure that this is correct
+int_jump<- as.data.frame.matrix(table(all_chr_jump2$Chrom, all_chr_jump2$jump)) 
 
 #############################################################################################
 ###
@@ -275,7 +336,7 @@ chr_diploid_all<- filter_diploid[filter_diploid$sum ==1 & filter_diploid$`2`==1,
 cnv_temp_brk <- cnv_mmrf2_second
 cnv_temp_brk_arm<- cnv_temp_brk[! cnv_temp_brk$Chrom %in% rownames(chr_diploid_all), ]
 
-
+if(nrow(cnv_temp_brk_arm)!=0){
 gr_cna_comm = with(cnv_temp_brk_arm, GRanges(Chrom, IRanges(start=end, end=end)))
 values(gr_cna_comm) <- DataFrame(sample = cnv_temp_brk_arm$sample, 
                                  major = cnv_temp_brk_arm$major, minor= cnv_temp_brk_arm$minor, seg_size= cnv_temp_brk_arm$seg_size)
@@ -290,6 +351,11 @@ range_10mb$arm[range_10mb$startB <= range_10mb$startA & range_10mb$endB >= range
 
 table(paste(range_arm$seqnames, range_arm$arm))
 db_arm_counts<- as.data.frame(table(paste(range_arm$seqnames, range_arm$arm)))
+}else{
+  db_arm_counts<- matrix(c("13 q_arm", 0), nrow=1)
+  db_arm_counts<- as.data.frame(db_arm_counts)
+  colnames(db_arm_counts)<- c("Var1","Freq")
+}
 
 #############################################################################################
 ###
@@ -341,7 +407,7 @@ oscCounts_df<- as.data.frame(oscCounts)
 
 ############################################################################################
 ####
-#### quality plot
+#### create final counts
 ####
 ############################################################################################
 
@@ -371,8 +437,8 @@ cnv_count_seg<- c(table(cnv_seg_all), missing_2)[order(as.numeric(names(c(table(
 ### Copy number change point - adiacent segment
 # plot(hist(cnv_mmrf2$jump[cnv_mmrf2$jump !=0]), xlim=c(0,10))
 
-cnv_mmrf2_second_jump$jump[cnv_mmrf2_second_jump$jump>7]<-7
-cnv_jump <- table(cnv_mmrf2_second_jump$jump[cnv_mmrf2_second_jump$jump !=0])
+all_chr_jump2$jump[all_chr_jump2$jump>7]<-7
+cnv_jump <- table(all_chr_jump2$jump[all_chr_jump2$jump !=0])
 missing_j<- as.character(1:7)[! as.character(1:7) %in% names(cnv_jump)  ]
 missing_j_2<- rep(0,length(missing_j))
 names(missing_j_2)<- missing_j
@@ -381,7 +447,7 @@ cnv_count_jump<- c(cnv_jump, missing_j_2)[order(as.numeric(names(c(cnv_jump, mis
 ###Breakpoint count per chromosome arm
 # barplot(table(db_arm_counts$Freq))
 
-arm_count<- db_arm_counts$Freq
+arm_count<- as.numeric(db_arm_counts$Freq)
 arm_count[arm_count>5]<- 5
 arm_count_tab<- table(arm_count)
 missing_arm<- as.character(1:5)[! as.character(1:5) %in% names(arm_count_tab)  ]
@@ -408,7 +474,10 @@ cnv_count_osci<- c(osci_cnv_tab, missing_osci_j_2)[order(as.numeric(names(c(osci
 
 # plot(hist(cnv_mmrf2$seg_size))
 
-seg_zie_count<- round(cnv_mmrf2$seg_size)
+## remove diploid reegions
+cnv_mmrf2_size<- cnv_mmrf2[cnv_mmrf2$major!=2,]
+
+seg_zie_count<- round(cnv_mmrf2_size$seg_size)
 seg_zie_count[seg_zie_count>10]<-10
 seg_zie_count<- seg_zie_count[seg_zie_count!=0]
 size_cnv_tab<- table(seg_zie_count)
@@ -458,10 +527,19 @@ mat_sig_cnv_final2[,1:length(mat_sig_cnv_final2)]<- apply(mat_sig_cnv_final2[,1:
 ### run hdp for cnv extraction
 ###
 #######################################################################################################################
-names_id<- c(1:3, 1:8,1:7,1:5,1:3,1:10 )
+names_id<- c(paste0("brk_10Mb_",1:3),
+             paste0("cnv_",1:8),
+             paste0("jump",1:7),
+             paste0("brk_amr",1:5),
+             paste0("oscill_",1:3),
+             paste0("sizd",1:10 ))
 
 ### plot entire cohort
-barplot(colSums(mat_sig_cnv_final2), col=cnv_colors_final, names.arg = names_id)
+par(mar=c(9,4,4,4))
+barplot(colSums(mat_sig_cnv_final2), las=2,
+        col=cnv_colors_final, names.arg = names_id)
+colnames(mat_sig_cnv_final2)<-names_id
+pheatmap(as.matrix(t(mat_sig_cnv_final2)))
 
 
 ### run hdp
@@ -503,7 +581,7 @@ p1 <- lapply(chains(mut_example_multi), plot_lik, bty="L", start=500)
 p2 <- lapply(chains(mut_example_multi), plot_numcluster, bty="L")
 p3 <- lapply(chains(mut_example_multi), plot_data_assigned, bty="L")
 
-mut_example_multi_0.8_10_all <- hdp_extract_components(mut_example_multi, cos.merge = 0.9, min.sample = 10) #### 5 component
+mut_example_multi_0.8_10_all <- hdp_extract_components(mut_example_multi, cos.merge = 0.85, min.sample = 10) #### 5 component
 
 mut_example_multi<- mut_example_multi_0.8_10_all
 par(mfrow=c(1,1), mar=c(5, 4, 4, 2))
@@ -514,7 +592,7 @@ posteriorMeans<- t(comp_categ_distn(mut_example_multi)[[1]])
 
 rownames(posteriorMeans)<-  names_id
 
-pdf("~/Desktop/project/SV_signatures/cnv/Commpass/cnv_signatures_0.9_10.pdf", width = 10, height = 5)
+pdf("~/Desktop/project/SV_signatures/cnv/Commpass/cnv_signatures__no_low_0.9_10.pdf", width = 10, height = 5)
 plot_comp_distn(mut_example_multi,  col=cnv_colors_final, col_nonsig = "grey", 
                 cat_names=as.character(names_id))
 dev.off()
@@ -522,21 +600,60 @@ dev.off()
 
 
 x<-((mut_example_multi@comp_dp_distn))
-kk<- x[["cred.int"]]
-kk2<- do.call("rbind", kk)
-kk2<- as.data.frame(kk2)
-dim(kk2)
-low<- as.data.frame(kk2[seq(1,nrow(kk2), by=2),])
-low[,1:ncol(low)]<- apply(low[,1:ncol(low)],2, function(x){as.numeric(as.character(x))})
-jj<- apply(low[,1:ncol(low)],2, function(x){(max(x))})
-low_high<-low
-low_high<- low[,which(jj>0.05)]
-posteriorMeans<- t(comp_categ_distn(mut_example_multi)[[1]])
-rownames(posteriorMeans)<- colnames(genomicData)
-
-all2<- posteriorMeans[,names(which(jj>0.05))]
-
-rownames(low)<- c("offset",sample_list)
-par(mar=c(10,5,5,5))
-barplot(as.matrix(t(low[1:10,])), col=brewer.pal(8, "Set1"), las=2)
+kk<- x[["mean"]]
+par(mar=c(10,4,4,4))
+barplot(as.matrix(t(kk[1:10,])), col=brewer.pal(8, "Set1"), las=2, 
+        names.arg = c("offset",sample_list)[1:10])
 legend("topright", legend=c(0:8), col=brewer.pal(8, "Set1"), pch=15)
+
+#####################################################################################
+###
+### create clustering based on signature
+###
+#####################################################################################
+
+mat_heat<- kk
+pheatmap(kk)
+rownames(kk)<- c("offset",sample_list)
+title=tempdir()
+d<- data.matrix(t(kk))
+d[,1:ncol(d)]<- apply(d[,1:ncol(d)],2, function(x){as.numeric(as.character(x))})
+# d = sweep(d,1, apply(d,1,median,na.rm=T))
+results = ConsensusClusterPlus(d,maxK=8,
+                               pFeature=1,
+                               title="test", 
+                               clusterAlg="hc",
+                               innerLinkage="ward.D2", 
+                               finalLinkage="ward.D2", 
+                               distance="euclidean", 
+                               seed=123456789)
+kk_clust<- as.data.frame((results[[5]]$consensusClass)) ##### 4 significant cluster
+kk_clust$sample<- c("offset",sample_list)
+colnames(kk_clust)[1]<- "cluster"
+table(kk_clust$cluster)
+kk_clust<- kk_clust[-which(kk_clust$sample == "offset"),]
+
+#####################################################################################
+###
+### clinical tests - correlation tests
+###
+#####################################################################################
+clin<- read.delim("~/Desktop/project/AMoritz/prediction_dec_2019.txt", stringsAsFactors = F)
+clin_mmrf<- clin[clin$study=="MMRF",]
+clin_mmrf$sample<- paste0(clin_mmrf$sample, "_1_BM")
+cllust_clin<- merge(kk_clust, clin_mmrf,by="sample" )
+cllust_clin$cluster<- as.factor(cllust_clin$cluster)
+surv_object_os_nos <-Surv(time = cllust_clin$pfs_time, event = cllust_clin$pfs_code)
+fit2_os <- survfit(surv_object_os_nos ~ cluster, data = cllust_clin)
+
+ggsurvplot(fit2_os, data = cllust_clin, pval = TRUE)
+
+c2_os<- paste("cluster","ISS","age","ecog",sep="+")
+
+f1_os <- as.formula(paste("Surv(pfs_time, pfs_code) ~ ",
+                              c2_os, collapse= "+"))
+                        
+f1_nos_os_single<- coxph(f1_os, data=cllust_clin)
+
+ggforest(f1_nos_os_single, fontsize =1, data = cllust_clin)
+
